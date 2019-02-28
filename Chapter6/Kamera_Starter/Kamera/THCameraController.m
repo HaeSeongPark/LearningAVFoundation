@@ -236,13 +236,38 @@ NSString *const THThumbnailCreatedNotification = @"THThumbnailCreated";
  
     // Listing 6.9
     
-    return NO;
+    // 1
+    return [[self activeCamera] isExposurePointOfInterestSupported];
+//    return NO;
 }
+
+// Define KVO centext pointer for observing `adjustingExposure` device property.
+static const NSString *THCameraAdjustingExposureContext;
 
 - (void)exposeAtPoint:(CGPoint)point {
 
     // Listing 6.9
-
+    
+    AVCaptureDevice *device = [self activeCamera];
+    AVCaptureExposureMode exposureMode = AVCaptureExposureModeContinuousAutoExposure;
+    
+    // 2
+    if ( device. isExposurePointOfInterestSupported && [device isExposureModeSupported:exposureMode]) {
+        NSError *error;
+        if([device lockForConfiguration:&error]) {
+            // 3
+            device.exposurePointOfInterest = point;
+            device.exposureMode = exposureMode;
+            
+            if([device isExposureModeSupported:AVCaptureExposureModeLocked]) {
+                //4
+                [device addObserver:self forKeyPath:@"adjustingExpousre" options:NSKeyValueObservingOptionNew context:&THCameraAdjustingExposureContext];
+            }
+            [device unlockForConfiguration];
+        } else {
+            [self.delegate deviceConfigurationFailedWithError:error];
+        }
+    }
 }
 
 - (void)observeValueForKeyPath:(NSString *)keyPath
@@ -251,13 +276,68 @@ NSString *const THThumbnailCreatedNotification = @"THThumbnailCreated";
                        context:(void *)context {
 
     // Listing 6.9
-
+    //5
+    if(context == &THCameraAdjustingExposureContext) {
+        AVCaptureDevice *device = (AVCaptureDevice *) object;
+        
+        //6
+        if(!device.isAdjustingExposure && [device isExposureModeSupported:AVCaptureExposureModeLocked]) {
+        
+            //7
+            [object removeObserver:self forKeyPath:@"adjustingExpousre" context:&THCameraAdjustingExposureContext];
+            
+            //8
+            dispatch_async(dispatch_get_main_queue(), ^{
+                NSError *error;
+                if([device lockForConfiguration:&error]) {
+                    device.exposureMode = AVCaptureExposureModeLocked;
+                    [device unlockForConfiguration];
+                } else {
+                    [self.delegate deviceConfigurationFailedWithError:error];
+                }
+            });
+        }
+    } else {
+        [super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
+    }
 }
 
 - (void)resetFocusAndExposureModes {
 
     // Listing 6.10
-
+    
+    AVCaptureDevice *device = [self activeCamera];
+    AVCaptureFocusMode focusMode = AVCaptureFocusModeContinuousAutoFocus;
+    
+    // 1
+    BOOL canResetFoucus = [device isFocusPointOfInterestSupported] && [device isFocusModeSupported:focusMode];
+    
+    AVCaptureExposureMode exposureMode = AVCaptureExposureModeContinuousAutoExposure;
+    
+    // 2
+    BOOL canResetExposure = [device isExposurePointOfInterestSupported] && [device isExposureModeSupported:exposureMode];
+    
+    // 3
+    CGPoint centerPoint = CGPointMake(0.5f, 0.5f);
+    NSError *error;
+    
+    if([device lockForConfiguration:&error]) {
+        // 4
+        if(canResetFoucus) {
+            device.focusMode = focusMode;
+            device.focusPointOfInterest = centerPoint;
+        }
+        
+        // 5
+        if(canResetExposure) {
+            device.exposureMode = exposureMode;
+            device.exposurePointOfInterest = centerPoint;
+        }
+        
+        [device unlockForConfiguration];
+    } else {
+        [self.delegate deviceConfigurationFailedWithError:error];
+    }
 }
 
 
@@ -265,89 +345,198 @@ NSString *const THThumbnailCreatedNotification = @"THThumbnailCreated";
 #pragma mark - Flash and Torch Modes
 
 - (BOOL)cameraHasFlash {
-
     // Listing 6.11
+    return [[self activeCamera] hasFlash];
     
-    return NO;
+//    return NO;
 }
 
 - (AVCaptureFlashMode)flashMode {
 
     // Listing 6.11
     
-    return 0;
+    return [[self activeCamera] flashMode];
+//    return 0;
 }
 
 - (void)setFlashMode:(AVCaptureFlashMode)flashMode {
-
     // Listing 6.11
-
+    AVCaptureDevice *device = [self activeCamera];
+    
+    if([device isFlashModeSupported:flashMode]) {
+        NSError *error;
+        if([device lockForConfiguration:&error]){
+            device.flashMode = flashMode;
+            [device unlockForConfiguration];
+        } else {
+            [self.delegate deviceConfigurationFailedWithError:error];
+        }
+    }
 }
 
 - (BOOL)cameraHasTorch {
-
     // Listing 6.11
     
-    return NO;
+    return [[self activeCamera] hasTorch];
+    
+//    return NO;
 }
 
 - (AVCaptureTorchMode)torchMode {
-
     // Listing 6.11
     
-    return 0;
+    return [[self activeCamera] torchMode];
+    
+//    return 0;
 }
 
 - (void)setTorchMode:(AVCaptureTorchMode)torchMode {
-
     // Listing 6.11
     
+    AVCaptureDevice *device = [self activeCamera];
+    if([device isTorchModeSupported:torchMode]) {
+        NSError *error;
+        if([device lockForConfiguration:&error]) {
+            device.torchMode = torchMode;
+            [device unlockForConfiguration];
+        } else {
+            [self.delegate deviceConfigurationFailedWithError:error];
+        }
+    }
 }
 
 
 #pragma mark - Image Capture Methods
 
 - (void)captureStillImage {
-
     // Listing 6.12
+    
+    // 1
+    AVCaptureConnection *connection = [self.imageOutput connectionWithMediaType:AVMediaTypeVideo];
+    
+    // 2
+    if(connection.isVideoOrientationSupported) {
+        connection.videoOrientation = [self currentVideoOrientation];
+    }
+    
+    id handler = ^(CMSampleBufferRef sampleBuufer, NSError *error) {
+        if(sampleBuufer != NULL) {
+            
+            // 4
+            NSData *imageData = [AVCaptureStillImageOutput jpegStillImageNSDataRepresentation:sampleBuufer];
+            
+            // 5
+            UIImage *image = [[UIImage alloc] initWithData:imageData];
+            
+            //6.13 - 1
+            [self writeImageToAssetsLibrary:image];
+            
+        } else{
+            NSLog(@"NULL sampleBuffer %@", [error localizedDescription]);
+        }
+    };
+    
+    //6  capture still image
+    [self.imageOutput captureStillImageAsynchronouslyFromConnection:connection completionHandler:handler];
 
 }
 
 - (AVCaptureVideoOrientation)currentVideoOrientation {
-    
+    AVCaptureVideoOrientation orientation;
     // Listing 6.12
+    // 3
+    switch ([UIDevice currentDevice].orientation) {
+        case UIDeviceOrientationPortrait:
+            orientation = AVCaptureVideoOrientationPortrait;
+            break;
+        case UIDeviceOrientationLandscapeRight :
+            orientation = AVCaptureVideoOrientationLandscapeLeft;
+            break;
+        case UIDeviceOrientationPortraitUpsideDown:
+            orientation = AVCaptureVideoOrientationPortraitUpsideDown;
+            break;
+        default:
+            orientation = AVCaptureVideoOrientationLandscapeRight;
+            break;
+    }
     
-    // Listing 6.13
-    
-    return 0;
+    return orientation;
+//    return 0;
 }
 
 
 - (void)writeImageToAssetsLibrary:(UIImage *)image {
-
     // Listing 6.13
+    
+    // 2
+    ALAssetsLibrary *library = [[ALAssetsLibrary alloc] init];
+    
+    // 3 & 4
+    [library writeImageToSavedPhotosAlbum:image.CGImage orientation:(NSInteger)image.imageOrientation completionBlock:^(NSURL *assetURL, NSError *error) {         
+        if(!error) {
+            [self postThumbnailNotifification:image]; // 5
+        } else {
+            id message = [error localizedDescription];
+            NSLog(@"Error : %@", message);
+        }
+    }];
     
 }
 
 - (void)postThumbnailNotifification:(UIImage *)image {
-
     // Listing 6.13
+    
+    NSNotificationCenter *nc = [NSNotificationCenter defaultCenter];
+    [nc postNotificationName:THThumbnailCreatedNotification object:image];
     
 }
 
 #pragma mark - Video Capture Methods
 
 - (BOOL)isRecording {
-
     // Listing 6.14
+    // 1
+    return self.movieOutput.isRecording;
     
-    return NO;
+//    return NO;
 }
 
 - (void)startRecording {
-
     // Listing 6.14
-
+    
+    if(![self isRecording]) {
+        // 2
+        AVCaptureConnection *videoConnection = [self.movieOutput connectionWithMediaType:AVMediaTypeVideo];
+        
+        // 3
+        if([videoConnection isVideoOrientationSupported]) {
+            videoConnection.videoOrientation = self.currentVideoOrientation;
+        }
+        
+        // 4
+        if([videoConnection isVideoStabilizationSupported]) {
+            videoConnection.preferredVideoStabilizationMode = YES;
+//            videoConnection.enablesVideoStabilizationWhenAvailable = YES;  // deprecated
+        }
+        
+        AVCaptureDevice *device = [self activeCamera];
+        
+        // 5
+        if(device.isSmoothAutoFocusEnabled) {
+            NSError *error;
+            if ([device lockForConfiguration:&error]) {
+                device.smoothAutoFocusEnabled = YES;
+                [device unlockForConfiguration];
+            } else {
+                [self.delegate deviceConfigurationFailedWithError:error];
+            }
+        }
+        // 6
+        self.outputURL = [self uniqueURL];
+        
+        // 8
+        [self.movieOutput startRecordingToOutputFileURL:self.outputURL recordingDelegate:self];
+    }
 }
 
 - (CMTime)recordedDuration {
@@ -355,16 +544,27 @@ NSString *const THThumbnailCreatedNotification = @"THThumbnailCreated";
 }
 
 - (NSURL *)uniqueURL {
-
-
     // Listing 6.14
+    // 7
+    
+    NSFileManager *fileManager = [NSFileManager defaultManager];
+    NSString *dirPath = [fileManager temporaryDirectoryWithTemplateString:@"kamera.test"];
+    
+    if(dirPath) {
+        NSString *filePath = [dirPath stringByAppendingPathComponent:@"kemera_movie.mov"];
+        return [NSURL fileURLWithPath:filePath];
+    }
     
     return nil;
 }
 
 - (void)stopRecording {
-
     // Listing 6.14
+    // 9
+    
+    if([self isRecording]) {
+        [self.movieOutput stopRecording];
+    }
 }
 
 #pragma mark - AVCaptureFileOutputRecordingDelegate
@@ -375,18 +575,62 @@ didFinishRecordingToOutputFileAtURL:(NSURL *)outputFileURL
                 error:(NSError *)error {
 
     // Listing 6.15
+    // 1
+    if(error) {
+        [self.delegate mediaCaptureFailedWithError:error];
+    } else {
+        [self writeVideoToAssetsLibrary:[self.outputURL copy]];
+    }
+    
+    self.outputURL = nil;
 
 }
 
 - (void)writeVideoToAssetsLibrary:(NSURL *)videoURL {
-
     // Listing 6.15
+    // 2
+    ALAssetsLibrary *library = [ALAssetsLibrary new];
     
+    // 3
+    if([library videoAtPathIsCompatibleWithSavedPhotosAlbum:videoURL]) {
+        ALAssetsLibraryWriteVideoCompletionBlock completionBlock;
+        
+        // 4
+        completionBlock = ^(NSURL *asssetURL, NSError *error) {
+            if(error) {
+                [self.delegate assetLibraryWriteFailedWithError:error];
+            } else {
+                [self generateThumbnailForVideoAtURL:videoURL];
+            }
+        };
+        
+        // 8
+        [library writeVideoAtPathToSavedPhotosAlbum:videoURL completionBlock:completionBlock];
+    }
 }
 
 - (void)generateThumbnailForVideoAtURL:(NSURL *)videoURL {
-
     // Listing 6.15
+    
+    dispatch_async(self.videoQueue, ^{
+        AVAsset *asset = [AVAsset assetWithURL:videoURL];
+        
+        // 5
+        AVAssetImageGenerator *imageGenerator = [AVAssetImageGenerator assetImageGeneratorWithAsset:asset];
+        imageGenerator.maximumSize = CGSizeMake(100.0f, 0.0f);
+        imageGenerator.appliesPreferredTrackTransform = YES;
+        
+        // 6
+        CGImageRef imageRef = [imageGenerator copyCGImageAtTime:kCMTimeZero actualTime:NULL error:nil];
+        
+        UIImage *image = [UIImage imageWithCGImage:imageRef];
+        CGImageRelease(imageRef);
+        
+        // 7
+        dispatch_async(dispatch_get_main_queue(), ^{
+            [self postThumbnailNotifification:image];
+        });
+    });
     
 }
 
