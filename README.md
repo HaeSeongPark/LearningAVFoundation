@@ -7,3 +7,6 @@ LearningAVFoundation(author Bob McCune)
 | title      | Description| code        | 
 |:-----------|:-----------|------------:|
 |Ch.1 Getting Started with AV Foundation |[link](https://haeseongpark.github.io/objc/LearningAVFoundation-EndOfChapter1/)   |   [link](https://github.com/HaeSeongPark/LearningAVFoundation/tree/master/Chapter1/HelloAVF_Starter)|
+|Ch.6 Getting Started with AV Foundation |[link](https://haeseongpark.github.io/objc/LearningAVFoundation-EndOfChapter6/)   |   [link](https://github.com/HaeSeongPark/LearningAVFoundation/tree/master/Chapter6/Kamera_Starter)|
+
+
